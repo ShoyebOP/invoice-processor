@@ -1,0 +1,21 @@
+{
+  "name": "invoice-processor",
+  "module": "src/server.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/server.ts",
+    "start": "bun run src/server.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@notionhq/client": "^5.16.0"
+  }
+}
