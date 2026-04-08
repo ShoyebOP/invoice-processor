@@ -6,7 +6,7 @@ import {
   clearAllFailedSaves,
   incrementRetryCount,
 } from "./api/failedSaves.ts";
-import { listSharedDatabases, selectDatabase, getDataSourceId, createInvoicePage } from "./services/notion.ts";
+import { listSharedDatabases, selectDatabase, getDataSourceId, createInvoicePage, clearDatabaseSelection } from "./services/notion.ts";
 import { Client } from "@notionhq/client";
 
 // Explicitly load .env file (Bun should do this automatically, but being explicit)
@@ -274,6 +274,14 @@ const server = Bun.serve({
             }
           );
         }
+      }
+
+      if (path === "/api/databases/clear" && req.method === "POST") {
+        clearDatabaseSelection();
+        return new Response(JSON.stringify({ status: "cleared" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
       }
 
       // Failed saves endpoints

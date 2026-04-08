@@ -27,7 +27,6 @@ const dbConfiguredState = document.getElementById("db-configured-state");
 const dbList = document.getElementById("db-list");
 const dbNoResults = document.getElementById("db-no-results");
 const dbCurrentName = document.getElementById("db-current-name");
-const dbChangeBtn = document.getElementById("db-change-btn");
 const keyInput = document.getElementById("key-input");
 const addKeyBtn = document.getElementById("add-key-btn");
 const keysTable = document.getElementById("keys-table");
@@ -398,8 +397,12 @@ window.removeFile = removeFile;
 window.deleteKey = deleteKey;
 window.retrySingleFailed = retrySingleFailed;
 window.selectDatabase = selectDatabase;
-
-// Failed Saves Management
+window.changeDatabase = function() {
+  console.log("Change button clicked");
+  dbPickerState.hidden = false;
+  dbConfiguredState.hidden = true;
+  loadDatabases();
+};
 async function loadFailedSaves() {
   try {
     const response = await fetch("/api/failed-saves");
@@ -691,13 +694,6 @@ async function selectDatabase(id) {
     }
   }
 }
-
-dbChangeBtn.addEventListener("click", () => {
-  // Switch back to picker state
-  dbPickerState.hidden = false;
-  dbConfiguredState.hidden = true;
-  loadDatabases();
-});
 
 // Initial load
 loadKeys();
