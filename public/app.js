@@ -627,7 +627,7 @@ function renderDatabases(databases, currentDatabaseId) {
     dbConfiguredState.hidden = false;
 
     // Find the current database name
-    const currentDb = databases.find((db) => db.id === currentDatabaseId);
+    const currentDb = databases.find((db) => db.dataSourceId === currentDatabaseId);
     if (currentDb) {
       dbCurrentName.textContent = currentDb.name;
     } else {
@@ -653,7 +653,7 @@ function renderDatabases(databases, currentDatabaseId) {
             <span class="db-item-icon">📋</span>
             <span class="db-item-name">${escapeHtml(db.name)}</span>
           </div>
-          <button class="db-item-select" onclick="selectDatabase('${db.id}')">Select</button>
+          <button class="db-item-select" onclick="selectDatabase('${db.dataSourceId}')">Select</button>
         </div>
       `
         )

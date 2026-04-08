@@ -81,18 +81,21 @@ export async function listSharedDatabases(): Promise<Array<{ dataSourceId: strin
   });
 
   const databases: Array<{ dataSourceId: string; databaseId: string; name: string }> = [];
+  const seen = new Set<string>();
 
   for (const result of response.results) {
     const obj = result as any;
     const dataSourceId = obj.id;
 
-    // Get parent database_id — it's nested under parent.database_id
+    // Deduplicate by dataSourceId
+    if (seen.has(dataSourceId)) continue;
+    seen.add(dataSourceId);
+
+    // Get parent database_id
     let databaseId = "";
     if (obj.parent && obj.parent.database_id) {
       databaseId = obj.parent.database_id;
     } else {
-      // Fallback: if there's no parent info, use the data_source_id as databaseId
-      // (they might be the same in some API versions)
       databaseId = dataSourceId;
     }
 
