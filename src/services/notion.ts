@@ -70,7 +70,7 @@ export function clearDatabaseSelection(): void {
  * List all data sources (databases) shared with this integration.
  * For each result, we get the data_source_id AND the parent database_id.
  */
-export async function listSharedDatabases(): Promise<Array<{ dataSourceId: string; databaseId: string; name: string }>> {
+export async function listSharedDatabases(): Promise<Array<{ dataSourceId: string; databaseId: string; name: string; properties: Record<string, any> }>> {
   const notion = getClient();
 
   const response = await notion.search({
@@ -80,7 +80,7 @@ export async function listSharedDatabases(): Promise<Array<{ dataSourceId: strin
     },
   });
 
-  const databases: Array<{ dataSourceId: string; databaseId: string; name: string }> = [];
+  const databases: Array<{ dataSourceId: string; databaseId: string; name: string; properties: Record<string, any> }> = [];
   const seen = new Set<string>();
 
   for (const result of response.results) {
@@ -106,11 +106,14 @@ export async function listSharedDatabases(): Promise<Array<{ dataSourceId: strin
       name = obj.title.map((t: any) => t.plain_text || t.text?.content || "").join("").trim() || "Unnamed Database";
     }
 
-    databases.push({ dataSourceId, databaseId, name });
+    const properties = obj.properties || {};
+
+    databases.push({ dataSourceId, databaseId, name, properties });
 
     console.log(`  📋 Found database: "${name}"`);
     console.log(`     data_source_id: ${dataSourceId}`);
     console.log(`     database_id:    ${databaseId}`);
+    console.log(`     columns:        ${Object.keys(properties).join(", ")}`);
   }
 
   return databases;
@@ -135,7 +138,7 @@ export async function selectDatabase(dataSourceId: string): Promise<{ id: string
   // Try to ensure schema, but don't fail if it doesn't work
   let schemaWarnings: string[] = [];
   try {
-    const result = await ensureDatabaseSchema(selected.databaseId);
+    const result = await ensureDatabaseSchema(selected.dataSourceId, selected.properties);
     schemaWarnings = result.schemaWarnings;
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
@@ -166,26 +169,17 @@ const REQUIRED_COLUMNS = [
 ];
 
 /**
- * Ensure the database has all required columns. Adds missing ones via PATCH /v1/databases/{id}.
- * Warns if columns exist with wrong types.
+ * Ensure the data source has all required columns. Uses PATCH /v1/data_sources/{dataSourceId}.
+ * Requires existingProperties from listSharedDatabases() search result.
  */
-export async function ensureDatabaseSchema(databaseId: string): Promise<{ schemaWarnings: string[] }> {
+export async function ensureDatabaseSchema(dataSourceId: string, existingProperties: Record<string, any>): Promise<{ schemaWarnings: string[] }> {
   const notion = getClient();
   const warnings: string[] = [];
 
-  console.log(`\n🔧 Checking database schema for: ${databaseId}`);
+  console.log(`\n🔧 Checking data source schema for: ${dataSourceId}`);
+  console.log(`   Existing columns: ${Object.keys(existingProperties).join(", ")}`);
 
-  let properties: Record<string, any>;
-  try {
-    const db = await notion.databases.retrieve({ database_id: databaseId });
-    properties = (db as any).properties || {};
-    console.log(`   Existing columns: ${Object.keys(properties).join(", ")}`);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : "Unknown error";
-    warnings.push(`Could not retrieve database: ${msg}`);
-    console.error(`   ❌ Could not retrieve database: ${msg}`);
-    return { schemaWarnings: warnings };
-  }
+  const properties = existingProperties;
 
   // Find the title property and rename it to "Title" if needed
   let titlePropName = "Title";
@@ -228,18 +222,26 @@ export async function ensureDatabaseSchema(databaseId: string): Promise<{ schema
     }
   }
 
-  // Apply updates
+  // Apply updates via PATCH /v1/data_sources/{data_source_id}
   if (Object.keys(updatePayload).length > 0) {
-    console.log(`   📝 Updating database with ${Object.keys(updatePayload).length} changes...`);
+    console.log(`   📝 Updating data source with ${Object.keys(updatePayload).length} changes...`);
     try {
-      await notion.request({
+      const response = await notion.request({
         method: "patch",
-        path: `databases/${databaseId}`,
+        path: `data_sources/${dataSourceId}`,
         body: {
           properties: updatePayload,
         },
       });
-      console.log(`   ✅ Database schema updated successfully`);
+
+      // Verify the update actually worked
+      const updatedProps = (response as any).properties;
+      if (updatedProps && Object.keys(updatePayload).every((key) => updatedProps[key])) {
+        console.log(`   ✅ Data source schema updated successfully`);
+      } else {
+        console.warn(`   ⚠️ Update returned 200 but columns may not have been applied`);
+        warnings.push("Schema update returned 200 but columns may not have been applied");
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unknown error";
       warnings.push(`Schema update failed: ${msg}`);
@@ -399,10 +401,7 @@ async function resolveColumnName(dataSourceId: string, baseName: string, fallbac
   const ds = allDataSources.find((d) => d.dataSourceId === dataSourceId);
   if (!ds) return baseName;
 
-  const notion = getClient();
-  const db = await notion.databases.retrieve({ database_id: ds.databaseId });
-  const properties = (db as any).properties || {};
-
+  const properties = ds.properties;
   if (properties[baseName]) return baseName;
   if (properties[fallbackName]) return fallbackName;
   return baseName;
