@@ -25,7 +25,7 @@ An AI-powered invoice processing tool that extracts structured data from images 
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/zaktomate-org/invoice-processor.git
 cd invoice-processor
 
 # Install dependencies
@@ -84,6 +84,7 @@ You need to create a table (database) in Notion yourself and share it with the i
 2. Click on your integration → **"Internal Integration"** tab
 3. Copy the token (starts with `ntn_`)
 4. Paste it in `.env`:
+
    ```env
    NOTION_API_KEY=ntn_your-token-here
    ```
@@ -240,9 +241,11 @@ The system supports multiple Gemini API keys for:
 This is the **most common error**. Here's exactly how to fix it:
 
 1. **Check your token in `.env`**:
+
    ```env
    NOTION_API_KEY=ntn_your-token-here
    ```
+
    - Make sure there are **no trailing spaces** or invisible characters
    - The token should start with `ntn_` (new format) or `secret_` (old format)
 
@@ -256,17 +259,20 @@ This is the **most common error**. Here's exactly how to fix it:
 3. **⚠️ DO NOT click "Refresh"** unless your token is compromised — this **immediately invalidates** your current token
 
 4. **Restart the server** after updating `.env`:
+
    ```bash
    # Stop current server (Ctrl+C), then:
    bun run dev
    ```
 
 5. **Test the token manually** (optional):
+
    ```bash
    curl -H "Authorization: Bearer ntn_your-token-here" \
         -H "Notion-Version: 2026-03-11" \
         https://api.notion.com/v1/users/me
    ```
+
    If you get a JSON response with your bot info, the token is valid.
 
 ### "No database selected" / "No database configured"
