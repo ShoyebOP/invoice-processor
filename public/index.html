@@ -73,6 +73,30 @@
         </div>
       </section>
 
+      <!-- Database Selection Section -->
+      <section id="database-section" class="section database-section">
+        <h2>📊 Transaction Database</h2>
+
+        <!-- Not configured State -->
+        <div id="db-picker-state" class="db-picker-state">
+          <p class="section-desc">Create a table in Notion, share it with your integration, then select it here</p>
+          <p id="db-no-results" class="db-no-results" hidden>No shared databases found. Make sure you've shared at least one database with your integration.</p>
+          <div id="db-list" class="db-list"></div>
+        </div>
+
+        <!-- Configured State -->
+        <div id="db-configured-state" class="db-configured-state" hidden>
+          <div class="db-current-db">
+            <span class="db-icon">📋</span>
+            <div>
+              <div class="db-name" id="db-current-name">Loading...</div>
+              <div class="db-hint">Selected — invoices will be saved here</div>
+            </div>
+            <button id="db-change-btn" class="btn btn-danger-outline btn-change-db">Change</button>
+          </div>
+        </div>
+      </section>
+
       <!-- API Keys Section -->
       <section class="section keys-section">
         <h2>⚙️ Gemini API Keys</h2>

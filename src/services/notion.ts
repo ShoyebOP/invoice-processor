@@ -53,7 +53,6 @@ function updateEnvFile(key: string, value: string): void {
   }
 
   if (!found) {
-    // Append the key if it wasn't found
     if (newLines.length > 0 && newLines[newLines.length - 1] !== "") {
       newLines.push("");
     }
@@ -64,9 +63,193 @@ function updateEnvFile(key: string, value: string): void {
 }
 
 /**
- * Get the database ID — from cache, env var, or auto-create and persist to .env
+ * List all databases shared with this integration
  */
-async function getDatabaseId(): Promise<string> {
+export async function listSharedDatabases(): Promise<Array<{ id: string; name: string; url: string }>> {
+  const notion = getClient();
+
+  try {
+    const response = await notion.search({
+      filter: {
+        property: "object",
+        value: "data_source",
+      },
+    });
+
+    const databases: Array<{ id: string; name: string; url: string }> = [];
+
+    for (const result of response.results) {
+      // Results can be database objects or data_source objects
+      const obj = result as any;
+      const id = obj.id;
+
+      // Get the name from title or name field
+      let name = "Unnamed Database";
+      if (obj.title && Array.isArray(obj.title) && obj.title.length > 0) {
+        name = obj.title.map((t: any) => t.plain_text || t.text?.content || "").join("").trim() || "Unnamed Database";
+      } else if (obj.name) {
+        name = obj.name;
+      }
+
+      const url = obj.url || `https://notion.so/${id.replace(/-/g, "")}`;
+
+      databases.push({ id, name, url });
+    }
+
+    return databases;
+  } catch (error) {
+    console.error("Error listing databases:", error);
+    return [];
+  }
+}
+
+/**
+ * Select a database and save its ID to .env
+ */
+export async function selectDatabase(id: string): Promise<{ id: string; name: string }> {
+  const notion = getClient();
+
+  // Validate the database exists and is accessible
+  try {
+    const db = await notion.databases.retrieve({ database_id: id });
+    const title = (db as any).title || [];
+    const name = title.map((t: any) => t.plain_text || t.text?.content || "").join("").trim() || "Unnamed Database";
+
+    // Save to .env
+    updateEnvFile("NOTION_DATABASE_ID", id);
+    // Update runtime env
+    Bun.env.NOTION_DATABASE_ID = id;
+    process.env.NOTION_DATABASE_ID = id;
+    cachedDatabaseId = id;
+
+    // Ensure the database schema has all required columns
+    const schemaResult = await ensureDatabaseSchema(id);
+
+    return { id, name, ...(schemaResult.schemaWarnings.length > 0 ? { warnings: schemaResult.schemaWarnings } : {}) };
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Cannot access database: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Required columns for the transaction ledger
+ */
+const REQUIRED_COLUMNS = [
+  { name: "Date", type: "date" as const },
+  { name: "Transaction Type", type: "select" as const },
+  { name: "Amount", type: "number" as const },
+  { name: "Invoice ID", type: "rich_text" as const },
+  { name: "Parties", type: "rich_text" as const },
+  { name: "Summary", type: "rich_text" as const },
+  { name: "See Full", type: "rich_text" as const },
+];
+
+/**
+ * Ensure the database has all required columns. Adds missing ones.
+ * Warns if columns exist with wrong types.
+ */
+export async function ensureDatabaseSchema(databaseId: string): Promise<{ schemaWarnings: string[] }> {
+  const notion = getClient();
+  const warnings: string[] = [];
+
+  try {
+    const db = await notion.databases.retrieve({ database_id: databaseId });
+    const properties = (db as any).properties || {};
+
+    // Find the title property and rename it to "Title" if needed
+    let titlePropName = "Title";
+    let titlePropId: string | null = null;
+    for (const [propName, propValue] of Object.entries(properties)) {
+      const prop = propValue as any;
+      if (prop.type === "title") {
+        titlePropId = prop.id;
+        if (propName !== "Title") {
+          titlePropName = propName;
+        }
+        break;
+      }
+    }
+
+    // Build the update payload
+    const updatePayload: Record<string, any> = {};
+
+    // Rename title property if needed
+    if (titlePropName && titlePropName !== "Title") {
+      updatePayload[titlePropName] = {
+        name: "Title",
+      };
+      warnings.push(`Renamed "${titlePropName}" → "Title"`);
+    }
+
+    // Check and add required columns
+    for (const col of REQUIRED_COLUMNS) {
+      const existingProp = properties[col.name];
+
+      if (!existingProp) {
+        // Column doesn't exist — add it
+        updatePayload[col.name] = buildPropertyDefinition(col.type);
+      } else {
+        const existingType = (existingProp as any).type;
+        if (existingType !== col.type) {
+          // Column exists but wrong type — create alternative
+          const fallbackName = `${col.name} (Txn)`;
+          if (!properties[fallbackName]) {
+            updatePayload[fallbackName] = buildPropertyDefinition(col.type);
+            warnings.push(`"${col.name}" exists as ${existingType}, created "${fallbackName}" instead`);
+          }
+        }
+      }
+    }
+
+    // Apply updates if needed
+    if (Object.keys(updatePayload).length > 0) {
+      await notion.databases.update({
+        database_id: databaseId,
+        ...updatePayload,
+      });
+      console.log(`📊 Database schema updated: ${Object.keys(updatePayload).length} changes applied`);
+    }
+
+    return { schemaWarnings: warnings };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    warnings.push(`Schema update failed: ${msg}`);
+    return { schemaWarnings: warnings };
+  }
+}
+
+/**
+ * Build a property definition for database update
+ */
+function buildPropertyDefinition(type: string): any {
+  switch (type) {
+    case "date":
+      return { date: {} };
+    case "select":
+      return {
+        select: {
+          options: [
+            { name: "Expense", color: "red" },
+            { name: "Income", color: "green" },
+          ],
+        },
+      };
+    case "number":
+      return { number: { format: "number" } };
+    case "rich_text":
+      return { rich_text: {} };
+    default:
+      return { rich_text: {} };
+  }
+}
+
+/**
+ * Get the database ID from cache or env. Returns null if not set.
+ */
+export async function getDatabaseId(): Promise<string | null> {
   // Return cached ID if available
   if (cachedDatabaseId) {
     return cachedDatabaseId;
@@ -79,154 +262,7 @@ async function getDatabaseId(): Promise<string> {
     return cachedDatabaseId;
   }
 
-  // Auto-create database and persist ID to .env
-  const database = await createInvoiceDatabase();
-  cachedDatabaseId = database.id;
-
-  // Write the database ID back to .env for future use
-  try {
-    updateEnvFile("NOTION_DATABASE_ID", database.id);
-    // Also update runtime env so subsequent requests don't re-read .env
-    Bun.env.NOTION_DATABASE_ID = database.id;
-    process.env.NOTION_DATABASE_ID = database.id;
-    console.log(`📊 Database ID saved to .env: ${database.id}`);
-  } catch (error) {
-    console.warn("Warning: Could not write database ID to .env:", error);
-  }
-
-  return cachedDatabaseId;
-}
-
-/**
- * Find the first page shared with this integration to use as parent
- */
-async function findParentPage(): Promise<string> {
-  const notion = getClient();
-
-  // Prefer to use a page from env if specified
-  const envParentId = Bun.env.NOTION_PAGE_ID?.trim();
-  if (envParentId) {
-    return envParentId;
-  }
-
-  let pages;
-  try {
-    pages = await notion.search({
-      filter: {
-        property: "object",
-        value: "page",
-      },
-      page_size: 1,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("401")) {
-      throw new Error(
-        "Notion API token is invalid (401 Unauthorized).\n\n" +
-        "How to fix:\n" +
-        "1. Go to https://www.notion.so/my-integrations\n" +
-        "2. Click on your integration → 'Internal Integration' tab\n" +
-        "3. Copy the token (starts with 'ntn_')\n" +
-        "4. Paste it in your .env file as NOTION_API_KEY\n" +
-        "5. DO NOT click 'Refresh' unless your token was exposed\n" +
-        "6. Restart the server\n\n" +
-        `Technical details: ${error.message}`
-      );
-    }
-    throw error;
-  }
-
-  if (pages.results.length === 0) {
-    throw new Error(
-      "No pages found in your Notion workspace that are shared with this integration.\n\n" +
-      "How to fix:\n" +
-      "1. Open Notion and go to any page (or create a new one)\n" +
-      "2. Click '•••' (three dots) in the top-right of the page\n" +
-      "3. Click 'Add connections' (or 'Connect to')\n" +
-      "4. Search for your integration name and select it\n" +
-      "5. Restart the server"
-    );
-  }
-
-  return pages.results[0].id;
-}
-
-/**
- * Create an invoice transaction ledger database under a parent page
- * Returns the database object
- */
-async function createInvoiceDatabase() {
-  const notion = getClient();
-  const parentPageId = await findParentPage();
-
-  const database = await notion.databases.create({
-    parent: {
-      type: "page_id",
-      page_id: parentPageId,
-    },
-    title: [
-      {
-        type: "text",
-        text: {
-          content: "Transaction Ledger",
-        },
-      },
-    ],
-    description: [
-      {
-        type: "text",
-        text: {
-          content: "Invoices processed by Gemini AI — each row links to a full invoice page",
-        },
-      },
-    ],
-    initial_data_source: {
-      properties: {
-        // Title column — shows as the main identifier in table view
-        Title: {
-          type: "title",
-          title: {},
-        },
-        Date: {
-          type: "date",
-          date: {},
-        },
-        "Transaction Type": {
-          type: "select",
-          select: {
-            options: [
-              { name: "Expense", color: "red" },
-              { name: "Income", color: "green" },
-            ],
-          },
-        },
-        Amount: {
-          type: "number",
-          number: {
-            format: "number",
-          },
-        },
-        "Invoice ID": {
-          type: "rich_text",
-          rich_text: {},
-        },
-        Parties: {
-          type: "rich_text",
-          rich_text: {},
-        },
-        Summary: {
-          type: "rich_text",
-          rich_text: {},
-        },
-        "See Full": {
-          type: "rich_text",
-          rich_text: {},
-        },
-      },
-    },
-  });
-
-  console.log(`📊 Created transaction ledger database under page ${parentPageId}`);
-  return database;
+  return null;
 }
 
 /**
@@ -376,91 +412,87 @@ async function createFullInvoicePage(parentPageId: string, invoice: InvoiceData)
  * Step 3: Update the "See Full" property with a link to the child page
  */
 export async function createInvoicePage(invoice: InvoiceData): Promise<string> {
-  const notion = getClient();
   const databaseId = await getDatabaseId();
 
-  // Step 1: Create the database entry (row in the ledger table)
-  // Start without the "See Full" field — we'll add it after creating the child page
-  const properties: Record<string, any> = {
-    Title: {
-      title: [
-        {
-          text: {
-            content: invoice.invoiceNumber,
-          },
-        },
-      ],
-    },
-    Date: {
-      date: {
-        start: invoice.date,
-      },
-    },
-    "Transaction Type": {
-      select: {
-        name: invoice.transactionType === "income" ? "Income" : "Expense",
-      },
-    },
-    Amount: {
-      number: invoice.signedAmount,
-    },
-    "Invoice ID": {
-      rich_text: invoice.invoiceId
-        ? [{ type: "text", text: { content: invoice.invoiceId } }]
-        : [],
-    },
-    Parties: {
-      rich_text: [
-        {
-          type: "text",
-          text: { content: invoice.parties },
-        },
-      ],
-    },
-    Summary: {
-      rich_text: [
-        {
-          type: "text",
-          text: { content: invoice.summary },
-        },
-      ],
-    },
+  if (!databaseId) {
+    throw new Error(
+      "No database selected.\n\n" +
+      "To fix:\n" +
+      "1. Create a table in Notion (or use an existing one)\n" +
+      "2. Share it with your integration (••• → Add connections)\n" +
+      "3. Go to http://localhost:3000 and select the database in the Database section"
+    );
+  }
+
+  const notion = getClient();
+
+  // Determine the actual column names — use fallback names if schema migration created them
+  const db = await notion.databases.retrieve({ database_id: databaseId });
+  const properties = (db as any).properties || {};
+
+  // Helper to get the actual column name (original or fallback)
+  const colName = (base: string, fallback: string): string => {
+    return properties[base] && properties[base].type === getExpectedType(base) ? base :
+           properties[fallback] ? fallback : base;
   };
+
+  // Step 1: Create the database entry (row in the ledger table)
+  const txnTypeCol = colName("Transaction Type", "Transaction Type (Txn)");
+  const amountCol = colName("Amount", "Amount (Txn)");
+  const dateCol = colName("Date", "Date (Txn)");
+  const partiesCol = colName("Parties", "Parties (Txn)");
+  const summaryCol = colName("Summary", "Summary (Txn)");
+  const seeFullCol = colName("See Full", "See Full (Txn)");
+  const invoiceIdCol = colName("Invoice ID", "Invoice ID (Txn)");
 
   const dbEntry = await notion.pages.create({
     parent: {
       type: "database_id",
       database_id: databaseId,
     },
-    properties,
+    properties: {
+      Title: {
+        title: [{ text: { content: invoice.invoiceNumber } }],
+      },
+      [dateCol]: {
+        date: { start: invoice.date },
+      },
+      [txnTypeCol]: {
+        select: {
+          name: invoice.transactionType === "income" ? "Income" : "Expense",
+        },
+      },
+      [amountCol]: {
+        number: invoice.signedAmount,
+      },
+      [invoiceIdCol]: {
+        rich_text: invoice.invoiceId ? [{ type: "text", text: { content: invoice.invoiceId } }] : [],
+      },
+      [partiesCol]: {
+        rich_text: [{ type: "text", text: { content: invoice.parties } }],
+      },
+      [summaryCol]: {
+        rich_text: [{ type: "text", text: { content: invoice.summary } }],
+      },
+    },
   });
 
   const dbEntryPageId = dbEntry.id;
 
   // Step 2: Create the child page with full invoice details
   const childPageId = await createFullInvoicePage(dbEntryPageId, invoice);
-
-  // Get the child page URL
   const childPageUrl = `https://notion.so/${childPageId.replace(/-/g, "")}`;
 
   // Step 3: Update the "See Full" property with a clickable link
   await notion.pages.update({
     page_id: dbEntryPageId,
     properties: {
-      "See Full": {
+      [seeFullCol]: {
         rich_text: [
           {
             type: "text",
-            text: {
-              content: "see full",
-              link: {
-                url: childPageUrl,
-              },
-            },
-            annotations: {
-              color: "blue",
-              underline: true,
-            },
+            text: { content: "see full", link: { url: childPageUrl } },
+            annotations: { color: "blue", underline: true },
           },
         ],
       },
@@ -472,4 +504,20 @@ export async function createInvoicePage(invoice: InvoiceData): Promise<string> {
   );
 
   return dbEntryPageId;
+}
+
+/**
+ * Get the expected type for a column name (for schema detection)
+ */
+function getExpectedType(colName: string): string {
+  const map: Record<string, string> = {
+    "Date": "date",
+    "Transaction Type": "select",
+    "Amount": "number",
+    "Invoice ID": "rich_text",
+    "Parties": "rich_text",
+    "Summary": "rich_text",
+    "See Full": "rich_text",
+  };
+  return map[colName] || "rich_text";
 }

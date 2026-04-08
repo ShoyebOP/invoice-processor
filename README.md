@@ -52,59 +52,43 @@ The server starts at `http://localhost:3000` by default (configurable via `PORT`
 
 ## 🔑 Detailed API Key Setup Guide
 
-### Step 1: Create a Notion Integration (Get API Key)
+### 1. Create a Notion Database
 
-This is the **most common source of errors**. Follow each step carefully:
+You need to create a table (database) in Notion yourself and share it with the integration:
 
-1. **Open Notion** in your browser and log in
-2. Go to **[notion.so/my-integrations](https://www.notion.so/my-integrations)**
-3. Click the **"+ New integration"** button (top right)
-4. Fill in the form:
-   - **Integration name**: `Invoice Processor` (or whatever you want)
-   - **Associated workspace**: Select your workspace from the dropdown
-   - **Icon**: Optional — upload an icon or skip
-5. Click **"Submit"** to create the integration
-6. You'll be taken to the integration's settings page
-7. Click on the **"Internal Integration"** tab (or "Configuration" tab)
-8. Under **"Internal Integration Secret"**, click **"Show"** or **"Refresh"**
-9. **Copy the token** — it will look like:
+1. **Open Notion** and create a new page or use an existing one
+2. **Type `/table`** and select **"Table"** to create a new database
+3. Give it a name like "Transaction Ledger" or "Invoices"
+4. **Share the database with your integration:**
+   - Click the **"•••" (three dots)** in the top-right of the database
+   - Click **"Add connections"** (or "Connect to")
+   - Search for and select your integration name
+
+> 📍 **Where to place it**: The database stays exactly where you create it — workspace root, inside a page, wherever you want. No random placement.
+
+### 2. Select the Database in the App
+
+1. Start the server: `bun run dev`
+2. Open `http://localhost:3000`
+3. Scroll to the **📊 Transaction Database** section
+4. You'll see a list of all databases shared with your integration
+5. Click **"Select"** on the one you created
+6. The app automatically adds the required columns (Date, Transaction Type, Amount, etc.) to your table
+7. Your selection is saved to `.env` — future runs use the same database automatically
+
+> ⚙️ **Schema auto-configuration**: When you select a database, the app checks if it has the required columns and adds any missing ones. If a column exists with the wrong type, a fallback column is created (e.g., "Date (Txn)").
+
+### 3. Add Your Notion API Key to `.env`
+
+1. Go to **[notion.so/my-integrations](https://www.notion.so/my-integrations)**
+2. Click on your integration → **"Internal Integration"** tab
+3. Copy the token (starts with `ntn_`)
+4. Paste it in `.env`:
+   ```env
+   NOTION_API_KEY=ntn_your-token-here
    ```
-   ntn_1234567890abcdef... (long string)
-   ```
-   > ⚠️ **Important**: If you had a token starting with `secret_`, that's the old format. Notion now issues tokens starting with `ntn_`. Both work.
-10. **Open your `.env` file** in the project root and paste it:
-    ```env
-    NOTION_API_KEY=ntn_your-token-here
-    ```
 
-> 🔄 **If your token stops working**: Go back to the integration settings page and click **"Refresh"** under Internal Integration Secret to generate a new token. **Old tokens are invalidated immediately when you refresh.** Update your `.env` file with the new token.
-
-### Step 2: Share a Notion Page with Your Integration
-
-**Your integration cannot access your workspace by default.** You must manually share at least one page with it:
-
-1. **Open Notion** and navigate to any page in your workspace (this will be the parent page where the invoice database is created)
-2. **Create a new page** if you don't have one:
-   - Click **"+ New Page"** in the sidebar
-   - Name it something like `"Invoice Processor"` or `"Work"`
-   - The page can be blank — it just needs to exist
-3. On that page, click the **"•••" (three dots)** menu in the **top-right corner** of the page
-4. Scroll down and click **"Add connections"** (or "Connect to" in some versions)
-5. In the search box, **type the name of your integration** (e.g., "Invoice Processor")
-6. **Click your integration** in the dropdown list to select it
-7. You should see a confirmation that the connection was added
-
-> ✅ **Verify**: The integration name should now appear in the page's connections list. If you see it, the page is shared correctly.
-
-### Step 3: Verify Your Setup
-
-1. **Save your `.env` file** with the correct `NOTION_API_KEY`
-2. **Restart the server** if it's running:
-   ```bash
-   # Stop the current server (Ctrl+C)
-   bun run dev
-   ```
-3. The server will automatically test the Notion connection on startup and report any issues
+> ⚠️ **DO NOT click "Refresh"** unless your token was exposed — this immediately invalidates your current token.
 
 ### Step 4: Google Gemini API Keys
 
@@ -285,13 +269,23 @@ This is the **most common error**. Here's exactly how to fix it:
    ```
    If you get a JSON response with your bot info, the token is valid.
 
-### "No pages found in Notion workspace"
+### "No database selected" / "No database configured"
 
-This means **no pages are shared** with your integration:
+This means no database has been selected yet:
 
-1. Open Notion and go to any page (or create a new one)
-2. Click **"•••"** → **"Add connections"** → select your integration
-3. Restart the server
+1. Create a table in Notion (type `/table` on any page)
+2. Share it with your integration: **`•••` → Add connections → select your integration**
+3. Go to `http://localhost:3000` → **📊 Transaction Database** section
+4. Click **"Select"** on your database
+5. The app auto-adds all required columns
+
+### "No shared databases found" in the database picker
+
+This means no databases are shared with your integration:
+
+1. Create a table in Notion (type `/table` on any page)
+2. Click **`•••`** on the table → **"Add connections"** → select your integration
+3. Refresh the app page or wait a few seconds — the database should appear
 
 ### "No Gemini API keys configured"
 

@@ -22,6 +22,12 @@ const failedSavesContent = document.getElementById("failed-saves-content");
 const failedSavesList = document.getElementById("failed-saves-list");
 const retryAllBtn = document.getElementById("retry-all-btn");
 const clearFailedBtn = document.getElementById("clear-failed-btn");
+const dbPickerState = document.getElementById("db-picker-state");
+const dbConfiguredState = document.getElementById("db-configured-state");
+const dbList = document.getElementById("db-list");
+const dbNoResults = document.getElementById("db-no-results");
+const dbCurrentName = document.getElementById("db-current-name");
+const dbChangeBtn = document.getElementById("db-change-btn");
 const keyInput = document.getElementById("key-input");
 const addKeyBtn = document.getElementById("add-key-btn");
 const keysTable = document.getElementById("keys-table");
@@ -391,6 +397,7 @@ async function deleteKey(keyId) {
 window.removeFile = removeFile;
 window.deleteKey = deleteKey;
 window.retrySingleFailed = retrySingleFailed;
+window.selectDatabase = selectDatabase;
 
 // Failed Saves Management
 async function loadFailedSaves() {
@@ -591,6 +598,108 @@ clearFailedBtn.addEventListener("click", async () => {
   }
 });
 
+// Database Picker Management
+async function loadDatabases() {
+  try {
+    const response = await fetch("/api/databases");
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error);
+    }
+
+    renderDatabases(data.databases, data.currentDatabaseId);
+  } catch (error) {
+    console.error("Failed to load databases:", error);
+  }
+}
+
+function renderDatabases(databases, currentDatabaseId) {
+  if (currentDatabaseId) {
+    // Show configured state
+    dbPickerState.hidden = true;
+    dbConfiguredState.hidden = false;
+
+    // Find the current database name
+    const currentDb = databases.find((db) => db.id === currentDatabaseId);
+    if (currentDb) {
+      dbCurrentName.textContent = currentDb.name;
+    } else {
+      dbCurrentName.textContent = `Database: ${currentDatabaseId.slice(0, 8)}...`;
+    }
+  } else {
+    // Show picker state
+    dbPickerState.hidden = false;
+    dbConfiguredState.hidden = true;
+
+    if (databases.length === 0) {
+      dbNoResults.hidden = false;
+      dbList.hidden = true;
+    } else {
+      dbNoResults.hidden = true;
+      dbList.hidden = false;
+
+      dbList.innerHTML = databases
+        .map(
+          (db) => `
+        <div class="db-item">
+          <div class="db-item-info">
+            <span class="db-item-icon">📋</span>
+            <span class="db-item-name">${escapeHtml(db.name)}</span>
+          </div>
+          <button class="db-item-select" onclick="selectDatabase('${db.id}')">Select</button>
+        </div>
+      `
+        )
+        .join("");
+    }
+  }
+}
+
+async function selectDatabase(id) {
+  const btn = document.querySelector(`.db-item-select[onclick="selectDatabase('${id}')"]`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Selecting...";
+  }
+
+  try {
+    const response = await fetch("/api/databases/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || data.message || "Failed to select database");
+    }
+
+    // Show any schema warnings
+    if (data.warnings && data.warnings.length > 0) {
+      console.log("Database schema warnings:", data.warnings);
+    }
+
+    showMessage(`✅ Database selected: ${data.name}`, "success");
+    loadDatabases();
+  } catch (error) {
+    showMessage(`❌ ${error.message}`, "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Select";
+    }
+  }
+}
+
+dbChangeBtn.addEventListener("click", () => {
+  // Switch back to picker state
+  dbPickerState.hidden = false;
+  dbConfiguredState.hidden = true;
+  loadDatabases();
+});
+
 // Initial load
 loadKeys();
 loadFailedSaves();
+loadDatabases();

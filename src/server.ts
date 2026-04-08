@@ -1,13 +1,13 @@
 import { handleUpload } from "./api/upload.ts";
 import { addKey, listKeys, deleteKey } from "./api/keys.ts";
-import { Client } from "@notionhq/client";
 import {
   loadFailedSaves,
   removeFailedSave,
   clearAllFailedSaves,
   incrementRetryCount,
 } from "./api/failedSaves.ts";
-import { createInvoicePage } from "./services/notion.ts";
+import { listSharedDatabases, selectDatabase, getDatabaseId, createInvoicePage } from "./services/notion.ts";
+import { Client } from "@notionhq/client";
 
 // Explicitly load .env file (Bun should do this automatically, but being explicit)
 try {
@@ -160,7 +160,7 @@ async function healthCheck() {
   const apiKey = Bun.env.NOTION_API_KEY?.trim();
 
   if (!apiKey) {
-    console.log("⚠️  Notion: NOTION_API_KEY not set in .env");
+    console.log("❌ Notion: NOTION_API_KEY not set in .env");
     console.log("   Get one at: https://www.notion.so/my-integrations");
     return;
   }
@@ -195,6 +195,21 @@ async function healthCheck() {
       console.log(`⚠️  Notion: Health check failed: ${msg}`);
     }
   }
+
+  // Check database selection
+  const dbId = await getDatabaseId();
+  if (!dbId) {
+    console.log("");
+    console.log("⚠️  Notion: No database selected");
+    console.log("   Go to http://localhost:3000 → Database section → pick a database");
+    console.log("");
+    console.log("   Steps:");
+    console.log("   1. Create a table in Notion (or use existing)");
+    console.log("   2. Share it with your integration (••• → Add connections)");
+    console.log("   3. Select it in the app's database picker");
+  } else {
+    console.log(`✅ Notion: Database selected: ${dbId}`);
+  }
 }
 
 const server = Bun.serve({
@@ -220,6 +235,45 @@ const server = Bun.serve({
       if (path.startsWith("/api/keys/") && req.method === "DELETE") {
         const keyId = path.replace("/api/keys/", "");
         return deleteKey(keyId);
+      }
+
+      // Database selection endpoints
+      if (path === "/api/databases" && req.method === "GET") {
+        const databases = await listSharedDatabases();
+        const currentDbId = Bun.env.NOTION_DATABASE_ID?.trim() || null;
+        return new Response(JSON.stringify({ databases, currentDatabaseId: currentDbId }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (path === "/api/databases/select" && req.method === "POST") {
+        try {
+          const body = await req.json();
+          const { id } = body as { id?: string };
+          if (!id) {
+            return new Response(JSON.stringify({ error: "Database ID required" }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          const result = await selectDatabase(id);
+          return new Response(JSON.stringify(result), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (error) {
+          return new Response(
+            JSON.stringify({
+              error: "Failed to select database",
+              message: error instanceof Error ? error.message : "Unknown error",
+            }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
       }
 
       // Failed saves endpoints
@@ -325,6 +379,8 @@ console.log(`   POST /api/upload - Upload invoice files`);
 console.log(`   GET  /api/keys   - List API keys`);
 console.log(`   POST /api/keys   - Add API key`);
 console.log(`   DELETE /api/keys/:id - Delete API key`);
+console.log(`   GET  /api/databases - List shared databases`);
+console.log(`   POST /api/databases/select - Select a database`);
 console.log(`   GET  /api/failed-saves - List failed Notion saves`);
 console.log(`   POST /api/failed-saves/retry-all - Retry all failed saves`);
 console.log(`   POST /api/failed-saves/:id/retry - Retry single failed save`);
