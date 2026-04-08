@@ -1,5 +1,8 @@
 import { Client } from "@notionhq/client";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import type { InvoiceData, LineItem } from "../types.ts";
+
+const ENV_FILE = ".env";
 
 // Lazy-initialized Notion client
 let notionClient: Client | null = null;
@@ -20,34 +23,92 @@ function getClient(): Client {
   return notionClient;
 }
 
+/**
+ * Read the current .env file content
+ */
+function readEnvFile(): string {
+  if (!existsSync(ENV_FILE)) {
+    return "";
+  }
+  return readFileSync(ENV_FILE, "utf-8");
+}
+
+/**
+ * Update a key in the .env file while preserving comments and formatting
+ */
+function updateEnvFile(key: string, value: string): void {
+  const content = readEnvFile();
+  const lines = content.split("\n");
+  const newLines: string[] = [];
+  let found = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith(key + "=") || trimmed.startsWith(key + " =")) {
+      newLines.push(`${key}=${value}`);
+      found = true;
+    } else {
+      newLines.push(line);
+    }
+  }
+
+  if (!found) {
+    // Append the key if it wasn't found
+    if (newLines.length > 0 && newLines[newLines.length - 1] !== "") {
+      newLines.push("");
+    }
+    newLines.push(`${key}=${value}`);
+  }
+
+  writeFileSync(ENV_FILE, newLines.join("\n"));
+}
+
+/**
+ * Get the database ID — from cache, env var, or auto-create and persist to .env
+ */
 async function getDatabaseId(): Promise<string> {
   // Return cached ID if available
   if (cachedDatabaseId) {
     return cachedDatabaseId;
   }
 
-  // Use env var if set
-  const envDatabaseId = Bun.env.NOTION_DATABASE_ID;
-  if (envDatabaseId && envDatabaseId.trim().length > 0) {
-    cachedDatabaseId = envDatabaseId.trim();
+  // Check env var
+  const envDatabaseId = Bun.env.NOTION_DATABASE_ID?.trim();
+  if (envDatabaseId && envDatabaseId.length > 0) {
+    cachedDatabaseId = envDatabaseId;
     return cachedDatabaseId;
   }
 
-  // Auto-create database
+  // Auto-create database and persist ID to .env
   const database = await createInvoiceDatabase();
   cachedDatabaseId = database.id;
-  console.log(`📊 Created invoice database: ${database.id}`);
+
+  // Write the database ID back to .env for future use
+  try {
+    updateEnvFile("NOTION_DATABASE_ID", database.id);
+    // Also update runtime env so subsequent requests don't re-read .env
+    Bun.env.NOTION_DATABASE_ID = database.id;
+    process.env.NOTION_DATABASE_ID = database.id;
+    console.log(`📊 Database ID saved to .env: ${database.id}`);
+  } catch (error) {
+    console.warn("Warning: Could not write database ID to .env:", error);
+  }
+
   return cachedDatabaseId;
 }
 
 /**
- * Create an invoice database in Notion under a random page
- * Returns the database ID
+ * Find the first page shared with this integration to use as parent
  */
-async function createInvoiceDatabase() {
+async function findParentPage(): Promise<string> {
   const notion = getClient();
 
-  // Find a suitable parent page
+  // Prefer to use a page from env if specified
+  const envParentId = Bun.env.NOTION_PAGE_ID?.trim();
+  if (envParentId) {
+    return envParentId;
+  }
+
   let pages;
   try {
     pages = await notion.search({
@@ -86,7 +147,16 @@ async function createInvoiceDatabase() {
     );
   }
 
-  const parentPageId = pages.results[0].id;
+  return pages.results[0].id;
+}
+
+/**
+ * Create an invoice transaction ledger database under a parent page
+ * Returns the database object
+ */
+async function createInvoiceDatabase() {
+  const notion = getClient();
+  const parentPageId = await findParentPage();
 
   const database = await notion.databases.create({
     parent: {
@@ -97,7 +167,7 @@ async function createInvoiceDatabase() {
       {
         type: "text",
         text: {
-          content: "Invoice Processor",
+          content: "Transaction Ledger",
         },
       },
     ],
@@ -105,13 +175,14 @@ async function createInvoiceDatabase() {
       {
         type: "text",
         text: {
-          content: "Invoices processed by Gemini AI",
+          content: "Invoices processed by Gemini AI — each row links to a full invoice page",
         },
       },
     ],
     initial_data_source: {
       properties: {
-        "Invoice Number": {
+        // Title column — shows as the main identifier in table view
+        Title: {
           type: "title",
           title: {},
         },
@@ -119,63 +190,34 @@ async function createInvoiceDatabase() {
           type: "date",
           date: {},
         },
-        "Due Date": {
-          type: "date",
-          date: {},
-        },
-        Vendor: {
-          type: "rich_text",
-          rich_text: {},
-        },
-        Customer: {
-          type: "rich_text",
-          rich_text: {},
-        },
-        Subtotal: {
-          type: "number",
-          number: {
-            format: "number",
-          },
-        },
-        Tax: {
-          type: "number",
-          number: {
-            format: "number",
-          },
-        },
-        Total: {
-          type: "number",
-          number: {
-            format: "number",
-          },
-        },
-        Currency: {
+        "Transaction Type": {
           type: "select",
           select: {
             options: [
-              { name: "USD" },
-              { name: "EUR" },
-              { name: "GBP" },
-              { name: "INR" },
-              { name: "JPY" },
-              { name: "CAD" },
-              { name: "AUD" },
-              { name: "CNY" },
-              { name: "Other" },
+              { name: "Expense", color: "red" },
+              { name: "Income", color: "green" },
             ],
           },
         },
-        Status: {
-          type: "select",
-          select: {
-            options: [
-              { name: "Pending", color: "yellow" },
-              { name: "Paid", color: "green" },
-              { name: "Overdue", color: "red" },
-            ],
+        Amount: {
+          type: "number",
+          number: {
+            format: "number",
           },
         },
-        "Source File": {
+        "Invoice ID": {
+          type: "rich_text",
+          rich_text: {},
+        },
+        Parties: {
+          type: "rich_text",
+          rich_text: {},
+        },
+        Summary: {
+          type: "rich_text",
+          rich_text: {},
+        },
+        "See Full": {
           type: "rich_text",
           rich_text: {},
         },
@@ -183,19 +225,164 @@ async function createInvoiceDatabase() {
     },
   });
 
+  console.log(`📊 Created transaction ledger database under page ${parentPageId}`);
   return database;
 }
 
 /**
- * Create a new page in the invoice database with extracted data
+ * Create a child page under a database entry page with the full invoice details
+ */
+async function createFullInvoicePage(parentPageId: string, invoice: InvoiceData): Promise<string> {
+  const notion = getClient();
+
+  // Build the full invoice content as blocks
+  const blocks: any[] = [];
+
+  // Vendor details
+  const vendorParts = [`**Vendor:** ${invoice.vendor.name}`];
+  if (invoice.vendor.address) vendorParts.push(`**Address:** ${invoice.vendor.address}`);
+  if (invoice.vendor.email) vendorParts.push(`**Email:** ${invoice.vendor.email}`);
+  if (invoice.vendor.phone) vendorParts.push(`**Phone:** ${invoice.vendor.phone}`);
+
+  blocks.push({
+    object: "block",
+    type: "heading_2",
+    heading_2: {
+      rich_text: [{ type: "text", text: { content: "Vendor Details" } }],
+    },
+  });
+
+  blocks.push({
+    object: "block",
+    type: "paragraph",
+    paragraph: {
+      rich_text: vendorParts.map((text) => ({
+        type: "text" as const,
+        text: { content: text + "\n" },
+      })),
+    },
+  });
+
+  // Customer details
+  if (invoice.customer.name) {
+    blocks.push({
+      object: "block",
+      type: "heading_2",
+      heading_2: {
+        rich_text: [{ type: "text", text: { content: "Customer" } }],
+      },
+    });
+
+    const customerParts = [`**Name:** ${invoice.customer.name}`];
+    if (invoice.customer.address) customerParts.push(`**Address:** ${invoice.customer.address}`);
+
+    blocks.push({
+      object: "block",
+      type: "paragraph",
+      paragraph: {
+        rich_text: customerParts.map((text) => ({
+          type: "text" as const,
+          text: { content: text + "\n" },
+        })),
+      },
+    });
+  }
+
+  // Line items
+  if (invoice.lineItems.length > 0) {
+    blocks.push({
+      object: "block",
+      type: "heading_2",
+      heading_2: {
+        rich_text: [{ type: "text", text: { content: "Line Items" } }],
+      },
+    });
+
+    for (const item of invoice.lineItems) {
+      blocks.push({
+        object: "block",
+        type: "bulleted_list_item",
+        bulleted_list_item: {
+          rich_text: [
+            {
+              type: "text",
+              text: {
+                content: `${item.description} — Qty: ${item.quantity} × ${invoice.currency} ${item.unitPrice.toFixed(2)} = ${invoice.currency} ${item.total.toFixed(2)}`,
+              },
+            },
+          ],
+        },
+      });
+    }
+  }
+
+  // Financial summary
+  blocks.push({
+    object: "block",
+    type: "divider",
+    divider: {},
+  });
+
+  blocks.push({
+    object: "block",
+    type: "heading_2",
+    heading_2: {
+      rich_text: [{ type: "text", text: { content: "Totals" } }],
+    },
+  });
+
+  blocks.push({
+    object: "block",
+    type: "paragraph",
+    paragraph: {
+      rich_text: [
+        { type: "text", text: { content: `Subtotal: ${invoice.currency} ${invoice.subtotal.toFixed(2)}\n` } },
+        { type: "text", text: { content: `Tax: ${invoice.currency} ${invoice.tax.toFixed(2)}\n` } },
+        {
+          type: "text",
+          annotations: { bold: true },
+          text: { content: `Total: ${invoice.currency} ${invoice.total.toFixed(2)}` },
+        },
+      ],
+    },
+  });
+
+  // Create the child page
+  const childPage = await notion.pages.create({
+    parent: {
+      type: "page_id",
+      page_id: parentPageId,
+    },
+    properties: {
+      title: {
+        title: [
+          {
+            type: "text",
+            text: { content: `Full Invoice — ${invoice.invoiceNumber}` },
+          },
+        ],
+      },
+    },
+    children: blocks,
+  });
+
+  return childPage.id;
+}
+
+/**
+ * Create a new row in the transaction ledger database with a child page for full details.
+ * Step 1: Create database entry (row in table)
+ * Step 2: Create child page with full invoice details
+ * Step 3: Update the "See Full" property with a link to the child page
  */
 export async function createInvoicePage(invoice: InvoiceData): Promise<string> {
   const notion = getClient();
   const databaseId = await getDatabaseId();
 
-  // Build properties
+  // Step 1: Create the database entry (row in the ledger table)
+  // Start without the "See Full" field — we'll add it after creating the child page
   const properties: Record<string, any> = {
-    "Invoice Number": {
+    Title: {
       title: [
         {
           text: {
@@ -209,56 +396,38 @@ export async function createInvoicePage(invoice: InvoiceData): Promise<string> {
         start: invoice.date,
       },
     },
-    Vendor: {
+    "Transaction Type": {
+      select: {
+        name: invoice.transactionType === "income" ? "Income" : "Expense",
+      },
+    },
+    Amount: {
+      number: invoice.signedAmount,
+    },
+    "Invoice ID": {
+      rich_text: invoice.invoiceId
+        ? [{ type: "text", text: { content: invoice.invoiceId } }]
+        : [],
+    },
+    Parties: {
       rich_text: [
         {
-          text: {
-            content: invoice.vendor.name,
-          },
+          type: "text",
+          text: { content: invoice.parties },
         },
       ],
     },
-    Customer: {
+    Summary: {
       rich_text: [
         {
-          text: {
-            content: invoice.customer.name,
-          },
+          type: "text",
+          text: { content: invoice.summary },
         },
       ],
-    },
-    Subtotal: {
-      number: invoice.subtotal,
-    },
-    Tax: {
-      number: invoice.tax,
-    },
-    Total: {
-      number: invoice.total,
-    },
-    Currency: {
-      select: {
-        name: isValidCurrency(invoice.currency) ? invoice.currency.toUpperCase() : "Other",
-      },
-    },
-    Status: {
-      select: {
-        name: "Pending",
-      },
     },
   };
 
-  // Add optional due date
-  if (invoice.dueDate) {
-    properties["Due Date"] = {
-      date: {
-        start: invoice.dueDate,
-      },
-    };
-  }
-
-  // Create the page
-  const page = await notion.pages.create({
+  const dbEntry = await notion.pages.create({
     parent: {
       type: "database_id",
       database_id: databaseId,
@@ -266,126 +435,41 @@ export async function createInvoicePage(invoice: InvoiceData): Promise<string> {
     properties,
   });
 
-  // Add line items as content blocks
-  const blocks: any[] = [];
+  const dbEntryPageId = dbEntry.id;
 
-  // Vendor details
-  if (invoice.vendor.address || invoice.vendor.email || invoice.vendor.phone) {
-    const vendorDetails = [
-      `**Vendor:** ${invoice.vendor.name}`,
-      invoice.vendor.address ? `**Address:** ${invoice.vendor.address}` : "",
-      invoice.vendor.email ? `**Email:** ${invoice.vendor.email}` : "",
-      invoice.vendor.phone ? `**Phone:** ${invoice.vendor.phone}` : "",
-    ].filter(Boolean);
+  // Step 2: Create the child page with full invoice details
+  const childPageId = await createFullInvoicePage(dbEntryPageId, invoice);
 
-    blocks.push({
-      object: "block",
-      type: "paragraph",
-      paragraph: {
-        rich_text: vendorDetails.map((text) => ({
-          type: "text" as const,
-          text: { content: text },
-        })),
-      },
-    });
-  }
+  // Get the child page URL
+  const childPageUrl = `https://notion.so/${childPageId.replace(/-/g, "")}`;
 
-  // Customer details
-  if (invoice.customer.address) {
-    blocks.push({
-      object: "block",
-      type: "paragraph",
-      paragraph: {
-        rich_text: [
-          {
-            type: "text",
-            text: { content: `**Customer:** ${invoice.customer.name} - ${invoice.customer.address}` },
-          },
-        ],
-      },
-    });
-  }
-
-  // Line items table header
-  blocks.push({
-    object: "block",
-    type: "heading_3",
-    heading_3: {
-      rich_text: [
-        {
-          type: "text",
-          text: { content: "Line Items" },
-        },
-      ],
-    },
-  });
-
-  // Add each line item as a bulleted list
-  for (const item of invoice.lineItems) {
-    blocks.push({
-      object: "block",
-      type: "bulleted_list_item",
-      bulleted_list_item: {
+  // Step 3: Update the "See Full" property with a clickable link
+  await notion.pages.update({
+    page_id: dbEntryPageId,
+    properties: {
+      "See Full": {
         rich_text: [
           {
             type: "text",
             text: {
-              content: `${item.description} - Qty: ${item.quantity} × $${item.unitPrice.toFixed(2)} = $${item.total.toFixed(2)}`,
+              content: "see full",
+              link: {
+                url: childPageUrl,
+              },
+            },
+            annotations: {
+              color: "blue",
+              underline: true,
             },
           },
         ],
       },
-    });
-  }
-
-  // Summary section
-  blocks.push({
-    object: "block",
-    type: "divider",
-    divider: {},
-  });
-
-  blocks.push({
-    object: "block",
-    type: "paragraph",
-    paragraph: {
-      rich_text: [
-        {
-          type: "text",
-          text: { content: `Subtotal: ${invoice.currency} ${invoice.subtotal.toFixed(2)}\n` },
-        },
-        {
-          type: "text",
-          text: { content: `Tax: ${invoice.currency} ${invoice.tax.toFixed(2)}\n` },
-        },
-        {
-          type: "text",
-          annotations: { bold: true },
-          text: { content: `Total: ${invoice.currency} ${invoice.total.toFixed(2)}` },
-        },
-      ],
     },
   });
 
-  // Append blocks to page
-  if (blocks.length > 0) {
-    await notion.blocks.children.append({
-      block_id: page.id,
-      children: blocks,
-    });
-  }
+  console.log(
+    `✅ Created ledger entry for ${invoice.invoiceNumber} (${invoice.transactionType}, ${invoice.currency} ${invoice.signedAmount}) → child page: ${childPageId}`
+  );
 
-  return page.id;
-}
-
-/**
- * Check if currency code is a common ISO code we have options for
- */
-function isValidCurrency(currency: string): boolean {
-  const commonCurrencies = [
-    "USD", "EUR", "GBP", "INR", "JPY", "CAD", "AUD", "CNY",
-    "CHF", "HKD", "SGD", "SEK", "KRW", "NOK", "NZD", "MXN",
-    "BRL", "RUB", "ZAR", "TRY", "AED", "SAR", "THB", "IDR",
-  ];
-  return commonCurrencies.includes(currency.toUpperCase());
+  return dbEntryPageId;
 }

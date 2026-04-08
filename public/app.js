@@ -184,6 +184,15 @@ function renderResults(data) {
           )
           .join("");
 
+        // Format signed amount with sign indicator
+        const amountStr = invoice.signedAmount >= 0
+          ? `+${invoice.currency} ${invoice.signedAmount.toFixed(2)}`
+          : `-${invoice.currency} ${Math.abs(invoice.signedAmount).toFixed(2)}`;
+        const amountColor = invoice.transactionType === "income" ? "var(--success)" : "var(--error)";
+        const typeBadge = invoice.transactionType === "income"
+          ? '<span style="color: var(--success); font-weight: 600;">▲ Income</span>'
+          : '<span style="color: var(--error); font-weight: 600;">▼ Expense</span>';
+
         return `
           <div class="result-card success">
             <div class="result-header">
@@ -193,28 +202,32 @@ function renderResults(data) {
             <div class="invoice-summary">
               <div class="invoice-field">
                 <label>Invoice #</label>
-                <value>${escapeHtml(invoice.invoiceNumber)}</value>
+                <value>${escapeHtml(invoice.invoiceId || invoice.invoiceNumber)}</value>
               </div>
               <div class="invoice-field">
                 <label>Date</label>
                 <value>${invoice.date}</value>
               </div>
               <div class="invoice-field">
+                <label>Type</label>
+                <value>${typeBadge}</value>
+              </div>
+              <div class="invoice-field">
+                <label>Amount</label>
+                <value style="color: ${amountColor}">${amountStr}</value>
+              </div>
+              <div class="invoice-field">
+                <label>Parties</label>
+                <value>${escapeHtml(invoice.parties)}</value>
+              </div>
+              <div class="invoice-field">
                 <label>Due Date</label>
                 <value>${invoice.dueDate || "Not specified"}</value>
               </div>
-              <div class="invoice-field">
-                <label>Vendor</label>
-                <value>${escapeHtml(invoice.vendor.name)}</value>
-              </div>
-              <div class="invoice-field">
-                <label>Customer</label>
-                <value>${escapeHtml(invoice.customer.name)}</value>
-              </div>
-              <div class="invoice-field">
-                <label>Total</label>
-                <value>${invoice.currency} ${invoice.total.toFixed(2)}</value>
-              </div>
+            </div>
+            <div class="invoice-field" style="margin-top: 0.5rem;">
+              <label>Summary</label>
+              <value style="font-weight: 400; font-size: 0.85rem;">${escapeHtml(invoice.summary)}</value>
             </div>
             ${
               invoice.lineItems.length > 0
@@ -409,12 +422,23 @@ function renderFailedSaves(failed) {
 
   failedSavesList.innerHTML = failed
     .map(
-      (entry) => `
+      (entry) => {
+        const invoice = entry.invoiceData;
+        const amountStr = invoice.signedAmount >= 0
+          ? `+${invoice.currency} ${invoice.signedAmount.toFixed(2)}`
+          : `-${invoice.currency} ${Math.abs(invoice.signedAmount).toFixed(2)}`;
+        const amountColor = invoice.transactionType === "income" ? "var(--success)" : "var(--error)";
+        const typeBadge = invoice.transactionType === "income"
+          ? '<span style="color: var(--success); font-weight: 600;">▲ Income</span>'
+          : '<span style="color: var(--error); font-weight: 600;">▼ Expense</span>';
+
+        return `
     <div class="failed-save-card" id="failed-${entry.id}">
       <div class="failed-save-header">
         <span class="failed-save-file">${escapeHtml(entry.fileName)}</span>
         <div class="failed-save-meta">
-          <span>Invoice #${escapeHtml(entry.invoiceData.invoiceNumber)}</span>
+          <span>${typeBadge}</span>
+          <span style="color: ${amountColor}; font-weight: 600;">${amountStr}</span>
           <span>Retries: ${entry.retryCount}</span>
           <span>${formatDate(entry.failedAt)}</span>
         </div>
@@ -422,20 +446,20 @@ function renderFailedSaves(failed) {
       <div class="failed-save-error">${escapeHtml(entry.errorMessage)}</div>
       <div class="failed-save-invoice">
         <div class="failed-save-field">
-          <label>Vendor</label>
-          <value>${escapeHtml(entry.invoiceData.vendor.name)}</value>
-        </div>
-        <div class="failed-save-field">
-          <label>Customer</label>
-          <value>${escapeHtml(entry.invoiceData.customer.name)}</value>
-        </div>
-        <div class="failed-save-field">
-          <label>Total</label>
-          <value>${entry.invoiceData.currency} ${entry.invoiceData.total.toFixed(2)}</value>
+          <label>Invoice ID</label>
+          <value>${escapeHtml(invoice.invoiceId || invoice.invoiceNumber)}</value>
         </div>
         <div class="failed-save-field">
           <label>Date</label>
-          <value>${entry.invoiceData.date}</value>
+          <value>${invoice.date}</value>
+        </div>
+        <div class="failed-save-field">
+          <label>Parties</label>
+          <value>${escapeHtml(invoice.parties)}</value>
+        </div>
+        <div class="failed-save-field">
+          <label>Summary</label>
+          <value>${escapeHtml(invoice.summary)}</value>
         </div>
       </div>
       <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; justify-content: flex-end;">
@@ -445,7 +469,8 @@ function renderFailedSaves(failed) {
         </button>
       </div>
     </div>
-  `
+  `;
+      }
     )
     .join("");
 }

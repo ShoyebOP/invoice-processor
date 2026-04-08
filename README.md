@@ -124,8 +124,15 @@ This is the **most common source of errors**. Follow each step carefully:
 2. **Add Gemini API Keys** in the ⚙️ section at the bottom
 3. **Upload invoices** by dragging & dropping files or clicking the upload zone
 4. **Click "Process Invoices"** to start OCR processing
-5. **View results** — extracted data appears in formatted cards
-6. **Check Notion** — a new "Invoice Processor" database is auto-created with all invoice data
+5. **View results** — extracted data appears in formatted cards showing:
+   - Transaction type (Income ▲ or Expense ▼)
+   - Signed amount (+ for income, – for expense)
+   - Invoice ID, date, parties, and summary
+   - Full line items and totals
+6. **Check Notion** — a "Transaction Ledger" database is auto-created under the first shared page
+   - `NOTION_DATABASE_ID` is automatically saved to your `.env` file
+   - Each invoice creates a **row** in the ledger table with: Date, Type, Amount, Invoice ID, Parties, Summary, and a clickable "see full" link
+   - Clicking "see full" opens a **nested child page** with the complete invoice details (vendor info, line items, totals)
 
 ### Supported File Formats
 
@@ -159,9 +166,18 @@ This is the **most common source of errors**. Follow each step carefully:
 2. Bun server receives files, validates types/sizes, encodes to base64
 3. Random Gemini API key selected from pool
 4. File sent to `gemini-3-flash-preview` with structured JSON schema
-5. Gemini returns extracted invoice data as JSON
-6. Invoice data saved to Notion database (auto-created if needed)
-7. Results displayed in browser with formatted cards
+5. Gemini returns extracted data: transaction type (income/expense), signed amount, invoice ID, parties, summary + full invoice details
+6. **Notion Step 1**: A row is created in the "Transaction Ledger" database with ledger fields
+7. **Notion Step 2**: A child page is created under the database row with full invoice details (vendor, line items, totals)
+8. **Notion Step 3**: The "See Full" column is updated with a clickable link to the child page
+9. Results displayed in browser with formatted cards
+
+### Database Auto-Creation
+
+- On first run (when `NOTION_DATABASE_ID` is empty in `.env`), a "Transaction Ledger" database is automatically created under the first page shared with your integration
+- The database ID is **persisted back to your `.env` file** for future runs
+- Subsequent runs reuse the same database — no duplicate databases are created
+- To use a different database, manually set `NOTION_DATABASE_ID` in `.env`
 
 ---
 
@@ -196,8 +212,23 @@ invoice-processor/
 | Variable | Description | Default |
 |----------|------------|---------|
 | `NOTION_API_KEY` | Notion integration token (starts with `ntn_` or `secret_`) | _(required)_ |
-| `NOTION_DATABASE_ID` | Existing database ID (leave empty to auto-create) | _(auto)_ |
+| `NOTION_DATABASE_ID` | Database ID — auto-filled on first run if left empty | _(auto-created)_ |
 | `PORT` | Server port number | `3000` |
+
+### Notion Database Structure
+
+The auto-created "Transaction Ledger" database has these columns:
+
+| Column | Type | Example |
+|--------|------|---------|
+| **Title** | Title | `INV-2024-001` |
+| **Date** | Date | `2024-03-15` |
+| **Transaction Type** | Select | `Expense` (red) / `Income` (green) |
+| **Amount** | Number | `-249.99` (expense) or `+500.00` (income) |
+| **Invoice ID** | Rich Text | `INV-2024-001` or empty |
+| **Parties** | Rich Text | `Staples Inc. → Shoyeb` |
+| **Summary** | Rich Text | `Office supplies purchase from Staples` |
+| **See Full** | Rich Text (link) | Clickable "see full" → opens child page with full invoice |
 
 ---
 

@@ -1,7 +1,15 @@
 // Invoice data structure extracted by Gemini
 export interface InvoiceData {
-  invoiceNumber: string;
+  // Ledger fields (for the database table row)
+  transactionType: "income" | "expense";
+  signedAmount: number; // negative for expense, positive for income
+  invoiceId: string | null;
   date: string; // YYYY-MM-DD
+  parties: string; // "Vendor → Customer"
+  summary: string; // one-line transaction description
+
+  // Full invoice fields (for the nested child page)
+  invoiceNumber: string;
   dueDate?: string; // YYYY-MM-DD
   vendor: {
     name: string;
