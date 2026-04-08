@@ -441,6 +441,147 @@ footer {
   font-size: 0.875rem;
 }
 
+/* Failed Saves Section */
+.empty-state {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.failed-saves-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.btn-retry-all {
+  width: auto;
+  display: inline-flex;
+}
+
+.btn-danger-outline {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+  width: auto;
+}
+
+.btn-danger-outline:hover {
+  background: var(--error);
+  color: white;
+}
+
+.failed-saves-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.failed-save-card {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--warning);
+  border-radius: var(--radius);
+  padding: 1rem;
+  background: var(--bg);
+}
+
+.failed-save-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.failed-save-file {
+  font-weight: 600;
+}
+
+.failed-save-meta {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+
+.failed-save-error {
+  font-size: 0.8rem;
+  color: var(--error);
+  background: var(--error-bg);
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius);
+  margin: 0.5rem 0;
+  word-break: break-word;
+}
+
+.failed-save-invoice {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.failed-save-field {
+  font-size: 0.8rem;
+}
+
+.failed-save-field label {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  margin-bottom: 0.125rem;
+}
+
+.failed-save-field value {
+  font-weight: 600;
+}
+
+.btn-retry-single {
+  background: var(--warning);
+  color: white;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  width: auto;
+  white-space: nowrap;
+}
+
+.btn-retry-single:hover {
+  background: #d97706;
+}
+
+.btn-retry-single:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-delete-failed {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  width: auto;
+  white-space: nowrap;
+}
+
+.btn-delete-failed:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.spinner-small {
+  animation: rotate 1s linear infinite;
+  width: 16px;
+  height: 16px;
+}
+
+.spinner-small circle {
+  stroke-linecap: round;
+}
+
 /* Responsive */
 @media (max-width: 640px) {
   .container {

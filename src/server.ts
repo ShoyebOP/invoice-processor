@@ -1,6 +1,13 @@
 import { handleUpload } from "./api/upload.ts";
 import { addKey, listKeys, deleteKey } from "./api/keys.ts";
 import { Client } from "@notionhq/client";
+import {
+  loadFailedSaves,
+  removeFailedSave,
+  clearAllFailedSaves,
+  incrementRetryCount,
+} from "./api/failedSaves.ts";
+import { createInvoicePage } from "./services/notion.ts";
 
 // Explicitly load .env file (Bun should do this automatically, but being explicit)
 try {
@@ -24,6 +31,129 @@ try {
 }
 
 const PORT = parseInt(Bun.env.PORT || "3000", 10);
+
+/**
+ * Retry saving a single failed invoice to Notion
+ */
+async function retrySingleFailedSave(id: string): Promise<Response> {
+  try {
+    const failed = await loadFailedSaves();
+    const entry = failed.find((f) => f.id === id);
+
+    if (!entry) {
+      return new Response(JSON.stringify({ error: "Failed save not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    await incrementRetryCount(id);
+    const notionPageId = await createInvoicePage(entry.invoiceData);
+    const removed = await removeFailedSave(id);
+
+    if (!removed) {
+      console.warn(`Warning: Could not remove failed save ${id} after successful retry`);
+    }
+
+    console.log(`✅ Retried and saved to Notion: ${entry.invoiceData.invoiceNumber} (ID: ${id})`);
+
+    return new Response(
+      JSON.stringify({
+        status: "success",
+        id,
+        notionPageId,
+        invoiceNumber: entry.invoiceData.invoiceNumber,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error(`Retry failed for ${id}:`, errorMessage);
+
+    return new Response(
+      JSON.stringify({
+        status: "failed",
+        id,
+        error: errorMessage,
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+}
+
+/**
+ * Retry saving all failed invoices to Notion
+ */
+async function retryAllFailedSaves(): Promise<Response> {
+  try {
+    const failed = await loadFailedSaves();
+
+    if (failed.length === 0) {
+      return new Response(JSON.stringify({ status: "no-failed-saves", total: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const results: Array<{ id: string; status: string; invoiceNumber?: string; error?: string }> = [];
+
+    for (const entry of failed) {
+      try {
+        await incrementRetryCount(entry.id);
+        const notionPageId = await createInvoicePage(entry.invoiceData);
+        await removeFailedSave(entry.id);
+        results.push({
+          id: entry.id,
+          status: "success",
+          invoiceNumber: entry.invoiceData.invoiceNumber,
+        });
+        console.log(`✅ Retried: ${entry.invoiceData.invoiceNumber}`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        results.push({
+          id: entry.id,
+          status: "failed",
+          error: errorMessage,
+        });
+        console.error(`❌ Retry failed for ${entry.fileName}: ${errorMessage}`);
+      }
+    }
+
+    const successCount = results.filter((r) => r.status === "success").length;
+    const failCount = results.filter((r) => r.status === "failed").length;
+
+    return new Response(
+      JSON.stringify({
+        status: "completed",
+        total: failed.length,
+        successCount,
+        failCount,
+        results,
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.error("Retry all failed:", errorMessage);
+
+    return new Response(
+      JSON.stringify({ error: "Failed to retry", message: errorMessage }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+}
 
 // Startup health check
 async function healthCheck() {
@@ -92,6 +222,47 @@ const server = Bun.serve({
         return deleteKey(keyId);
       }
 
+      // Failed saves endpoints
+      if (path === "/api/failed-saves" && req.method === "GET") {
+        const failed = await loadFailedSaves();
+        return new Response(JSON.stringify({ failed, total: failed.length }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (path === "/api/failed-saves/retry-all" && req.method === "POST") {
+        return await retryAllFailedSaves();
+      }
+
+      if (path.startsWith("/api/failed-saves/") && path.endsWith("/retry") && req.method === "POST") {
+        const id = path.replace("/api/failed-saves/", "").replace("/retry", "");
+        return await retrySingleFailedSave(id);
+      }
+
+      if (path === "/api/failed-saves/clear" && req.method === "POST") {
+        await clearAllFailedSaves();
+        return new Response(JSON.stringify({ status: "cleared" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (path.startsWith("/api/failed-saves/") && req.method === "DELETE") {
+        const id = path.replace("/api/failed-saves/", "");
+        const removed = await removeFailedSave(id);
+        if (!removed) {
+          return new Response(JSON.stringify({ error: "Failed save not found" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ status: "deleted", id }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       // Static file serving
       if (path === "/" || path === "/index.html") {
         const file = Bun.file("public/index.html");
@@ -154,6 +325,10 @@ console.log(`   POST /api/upload - Upload invoice files`);
 console.log(`   GET  /api/keys   - List API keys`);
 console.log(`   POST /api/keys   - Add API key`);
 console.log(`   DELETE /api/keys/:id - Delete API key`);
+console.log(`   GET  /api/failed-saves - List failed Notion saves`);
+console.log(`   POST /api/failed-saves/retry-all - Retry all failed saves`);
+console.log(`   POST /api/failed-saves/:id/retry - Retry single failed save`);
+console.log(`   POST /api/failed-saves/clear - Clear all failed saves`);
 console.log("");
 
 // Run health check on startup

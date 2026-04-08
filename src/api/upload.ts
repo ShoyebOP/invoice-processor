@@ -2,6 +2,7 @@ import { fileToBase64, isValidFileType, isValidFileSize, getMimeType } from "../
 import type { FileUpload, ProcessResult, InvoiceData } from "../types.ts";
 import { processWithGemini } from "../services/gemini.ts";
 import { createInvoicePage } from "../services/notion.ts";
+import { addFailedSave } from "./failedSaves.ts";
 
 const MAX_FILE_SIZE_MB = 50;
 
@@ -103,6 +104,14 @@ export async function handleUpload(req: Request): Promise<Response> {
           console.error("   Open a Notion page → ••• → Add connections → select your integration");
         } else {
           console.error("Notion error:", error);
+        }
+
+        // Save to local cache for retry
+        try {
+          const failedEntry = await addFailedSave(fileName, invoiceData, errorMessage);
+          console.log(`💾 Saved failed result locally (ID: ${failedEntry.id}) for retry`);
+        } catch (cacheError) {
+          console.error("Failed to save to local cache:", cacheError);
         }
 
         results.push({

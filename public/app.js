@@ -2,6 +2,7 @@
 const state = {
   files: [],
   isProcessing: false,
+  isRetrying: false,
 };
 
 // DOM Elements
@@ -14,6 +15,13 @@ const btnLoader = processBtn.querySelector(".btn-loader");
 const resultsSection = document.getElementById("results-section");
 const summaryDiv = document.getElementById("summary");
 const resultsDiv = document.getElementById("results");
+const failedSavesSection = document.getElementById("failed-saves-section");
+const failedCount = document.getElementById("failed-count");
+const failedSavesEmpty = document.getElementById("failed-saves-empty");
+const failedSavesContent = document.getElementById("failed-saves-content");
+const failedSavesList = document.getElementById("failed-saves-list");
+const retryAllBtn = document.getElementById("retry-all-btn");
+const clearFailedBtn = document.getElementById("clear-failed-btn");
 const keyInput = document.getElementById("key-input");
 const addKeyBtn = document.getElementById("add-key-btn");
 const keysTable = document.getElementById("keys-table");
@@ -369,6 +377,195 @@ async function deleteKey(keyId) {
 // Make functions available globally
 window.removeFile = removeFile;
 window.deleteKey = deleteKey;
+window.retrySingleFailed = retrySingleFailed;
+
+// Failed Saves Management
+async function loadFailedSaves() {
+  try {
+    const response = await fetch("/api/failed-saves");
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error);
+    }
+
+    renderFailedSaves(data.failed);
+  } catch (error) {
+    console.error("Failed to load failed saves:", error);
+  }
+}
+
+function renderFailedSaves(failed) {
+  failedCount.textContent = failed.length;
+
+  if (failed.length === 0) {
+    failedSavesSection.hidden = true;
+    return;
+  }
+
+  failedSavesSection.hidden = false;
+  failedSavesEmpty.hidden = true;
+  failedSavesContent.hidden = false;
+
+  failedSavesList.innerHTML = failed
+    .map(
+      (entry) => `
+    <div class="failed-save-card" id="failed-${entry.id}">
+      <div class="failed-save-header">
+        <span class="failed-save-file">${escapeHtml(entry.fileName)}</span>
+        <div class="failed-save-meta">
+          <span>Invoice #${escapeHtml(entry.invoiceData.invoiceNumber)}</span>
+          <span>Retries: ${entry.retryCount}</span>
+          <span>${formatDate(entry.failedAt)}</span>
+        </div>
+      </div>
+      <div class="failed-save-error">${escapeHtml(entry.errorMessage)}</div>
+      <div class="failed-save-invoice">
+        <div class="failed-save-field">
+          <label>Vendor</label>
+          <value>${escapeHtml(entry.invoiceData.vendor.name)}</value>
+        </div>
+        <div class="failed-save-field">
+          <label>Customer</label>
+          <value>${escapeHtml(entry.invoiceData.customer.name)}</value>
+        </div>
+        <div class="failed-save-field">
+          <label>Total</label>
+          <value>${entry.invoiceData.currency} ${entry.invoiceData.total.toFixed(2)}</value>
+        </div>
+        <div class="failed-save-field">
+          <label>Date</label>
+          <value>${entry.invoiceData.date}</value>
+        </div>
+      </div>
+      <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem; justify-content: flex-end;">
+        <button class="btn btn-delete-failed" onclick="deleteFailedSave('${entry.id}')">Discard</button>
+        <button class="btn btn-retry-single" id="retry-btn-${entry.id}" onclick="retrySingleFailed('${entry.id}')">
+          Retry Notion Save
+        </button>
+      </div>
+    </div>
+  `
+    )
+    .join("");
+}
+
+async function retrySingleFailed(id) {
+  const btn = document.getElementById(`retry-btn-${id}`);
+  if (!btn) return;
+
+  btn.disabled = true;
+  btn.textContent = "Retrying...";
+
+  try {
+    const response = await fetch(`/api/failed-saves/${id}/retry`, {
+      method: "POST",
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "Retry failed");
+    }
+
+    if (data.status === "success") {
+      showMessage("✅ Invoice saved to Notion successfully!", "success");
+      loadFailedSaves();
+    } else {
+      showMessage(`❌ Retry failed: ${data.error}`, "error");
+      btn.disabled = false;
+      btn.textContent = "Retry Notion Save";
+    }
+  } catch (error) {
+    showMessage(`❌ ${error.message}`, "error");
+    btn.disabled = false;
+    btn.textContent = "Retry Notion Save";
+  }
+}
+
+async function deleteFailedSave(id) {
+  if (!confirm("Discard this failed save? The invoice data will be lost.")) return;
+
+  try {
+    const response = await fetch(`/api/failed-saves/${id}`, {
+      method: "DELETE",
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error);
+    }
+
+    loadFailedSaves();
+  } catch (error) {
+    showMessage("Failed to delete failed save", "error");
+  }
+}
+
+retryAllBtn.addEventListener("click", async () => {
+  if (state.isRetrying) return;
+
+  state.isRetrying = true;
+  retryAllBtn.disabled = true;
+  retryAllBtn.innerHTML = `
+    <svg class="spinner-small" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" fill="none" stroke-width="3" />
+    </svg>
+    Retrying...
+  `;
+
+  try {
+    const response = await fetch("/api/failed-saves/retry-all", {
+      method: "POST",
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || "Retry all failed");
+    }
+
+    if (data.status === "no-failed-saves") {
+      showMessage("No failed saves to retry", "success");
+    } else {
+      const msg = `Retry complete: ${data.successCount}/${data.total} succeeded, ${data.failCount} failed`;
+      if (data.failCount === 0) {
+        showMessage(`✅ ${msg}`, "success");
+      } else {
+        showMessage(`⚠️ ${msg}`, "error");
+      }
+    }
+
+    loadFailedSaves();
+  } catch (error) {
+    showMessage(`❌ ${error.message}`, "error");
+  } finally {
+    state.isRetrying = false;
+    retryAllBtn.disabled = false;
+    retryAllBtn.innerHTML = "Retry All";
+  }
+});
+
+clearFailedBtn.addEventListener("click", async () => {
+  if (!confirm("Clear ALL failed saves? This cannot be undone.")) return;
+
+  try {
+    const response = await fetch("/api/failed-saves/clear", {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to clear failed saves");
+    }
+
+    showMessage("✅ All failed saves cleared", "success");
+    loadFailedSaves();
+  } catch (error) {
+    showMessage("Failed to clear failed saves", "error");
+  }
+});
 
 // Initial load
 loadKeys();
+loadFailedSaves();

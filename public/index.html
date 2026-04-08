@@ -49,6 +49,30 @@
         <div id="results" class="results"></div>
       </section>
 
+      <!-- Failed Saves Section -->
+      <section id="failed-saves-section" class="section failed-saves-section" hidden>
+        <h2>💾 Failed Notion Saves (<span id="failed-count">0</span>)</h2>
+        <p class="section-desc">Invoices that failed to save to Notion — retry once Notion is fixed</p>
+
+        <div id="failed-saves-empty" class="empty-state">
+          <p>No failed saves — all invoices saved to Notion successfully!</p>
+        </div>
+
+        <div id="failed-saves-content" hidden>
+          <div class="failed-saves-actions">
+            <button id="retry-all-btn" class="btn btn-secondary btn-retry-all">
+              <svg class="spinner-small" viewBox="0 0 24 24" hidden>
+                <circle cx="12" cy="12" r="10" stroke="currentColor" fill="none" stroke-width="3" />
+              </svg>
+              Retry All
+            </button>
+            <button id="clear-failed-btn" class="btn btn-danger-outline">Clear All</button>
+          </div>
+
+          <div id="failed-saves-list" class="failed-saves-list"></div>
+        </div>
+      </section>
+
       <!-- API Keys Section -->
       <section class="section keys-section">
         <h2>⚙️ Gemini API Keys</h2>
